@@ -148,10 +148,7 @@ class AnimeDataVisualizer:
 
 class AnimeDataAnalyzer:
     def genre_preferences_over_time(self, df: pd.DataFrame):
-        # We assume that genres are stored as comma-separated strings in the 'public_genres' column
         df['public_genres'] = df['public_genres'].apply(lambda x: x.split(', '))
-
-        # Group by year and then calculate the most common genres for each year
         grouped = df.groupby('year')
         genre_frequency_by_year = {}
 
@@ -160,37 +157,129 @@ class AnimeDataAnalyzer:
             genre_frequency = Counter(all_genres)
             genre_frequency_by_year[year] = genre_frequency
 
-        # Convert to DataFrame for easier plotting
         df_genre_frequency_by_year = pd.DataFrame(genre_frequency_by_year).T.fillna(0)
-        df_genre_frequency_by_year.plot(kind='bar', stacked=True)
+
+        plt.figure(figsize=(10, 6))
+        for genre in df_genre_frequency_by_year.columns:
+            plt.plot(df_genre_frequency_by_year.index, df_genre_frequency_by_year[genre], label=genre)
 
         plt.title('Genre preferences over time')
         plt.xlabel('Year')
         plt.ylabel('Number of animes')
+        plt.legend()
         plt.show()
 
+    def genre_preferences_over_time_dt(self, df: pd.DataFrame, derivative_interval: int = 100):
+        from scipy.signal import savgol_filter
+
+        df['date'] = pd.to_datetime(df['user_updated_at']).dt.date
+        grouped = df.groupby('date')
+        genre_frequency_by_date = {}
+
+        for date, group in grouped:
+            all_genres = [genre for sublist in group['public_genres'].tolist() for genre in sublist]
+            genre_frequency = Counter(all_genres)
+            genre_frequency_by_date[date] = genre_frequency
+
+        df_genre_frequency_by_date = pd.DataFrame(genre_frequency_by_date).T.fillna(0)
+        df_genre_frequency_by_date = df_genre_frequency_by_date.sort_index()
+
+        # Calculate the derivative of genre preferences
+        num_genres = len(df_genre_frequency_by_date.columns)
+        min_window_length = min(derivative_interval, len(df_genre_frequency_by_date))
+
+        print(min_window_length)
+
+        df_genre_frequency_by_date_smoothed = df_genre_frequency_by_date.apply(
+            lambda x: savgol_filter(x, window_length=min_window_length, polyorder=3, deriv=1)
+        )
+
+        plt.figure(figsize=(10, 6))
+        for genre in df_genre_frequency_by_date_smoothed.columns:
+            plt.plot(df_genre_frequency_by_date_smoothed.index, df_genre_frequency_by_date_smoothed[genre], label=genre)
+
+        plt.title('Genre Preferences over Time (Derivative)')
+        plt.xlabel('Date')
+        plt.ylabel('Rate of Change')
+        plt.legend()
+        plt.show()
+
+        for genre in df_genre_frequency_by_date_smoothed.columns:
+            genre_derivative = df_genre_frequency_by_date_smoothed[genre]
+
+            max_derivative_date = genre_derivative.idxmax()
+            max_derivative = genre_derivative.max()
+
+            min_derivative_date = genre_derivative.idxmin()
+            min_derivative = genre_derivative.min()
+
+            threshold = 0.01  # Adjust the threshold for significance as needed
+
+            if abs(max_derivative) > threshold or abs(min_derivative) > threshold:
+                print(f"Genre: {genre}")
+                
+                if abs(max_derivative) > threshold:
+                    print(f"Max Rate of Change: {max_derivative:.2f} on {max_derivative_date}")
+                
+                if abs(min_derivative) > threshold:
+                    print(f"Min Rate of Change: {min_derivative:.2f} on {min_derivative_date}")
+
+                print("--------------------------------------")
+
+
     def favorite_studio(self, df: pd.DataFrame):
-        # Assuming studios are stored as comma-separated strings in the 'public_studios' column
         df['public_studios'] = df['public_studios'].apply(lambda x: x.split(', '))
         all_studios = [studio for sublist in df['public_studios'].tolist() for studio in sublist]
         studio_frequency = Counter(all_studios)
-        print(f"The user's favorite studio is: {studio_frequency.most_common(1)[0][0]}")
+
+        studios = [studio for studio, count in studio_frequency.most_common()]
+        counts = [count for studio, count in studio_frequency.most_common()]
+
+        plt.figure(figsize=(10, 6))
+        sns.barplot(x=counts, y=studios, color='skyblue')
+        plt.title("Favorite Animation Studio")
+        plt.xlabel("Frequency")
+        plt.ylabel("Studio")
+        plt.show()
+
 
     def compare_scores(self, df: pd.DataFrame):
         average_user_score = np.mean(df['user_score'])
         average_public_score = np.mean(df['public_score'])
-        print(f"Average user score: {average_user_score:.2f}")
-        print(f"Average public score: {average_public_score:.2f}")
+
+        plt.figure(figsize=(8, 4))
+        scores = ['User Score', 'Public Score']
+        avg_scores = [average_user_score, average_public_score]
+        colors = ['skyblue', 'lightgreen']
+        plt.bar(scores, avg_scores, color=colors)
+        plt.title('Comparison of User Score and Public Score')
+        plt.xlabel('Score Type')
+        plt.ylabel('Average Score')
+        plt.ylim(0, 10)
+        plt.show()
+
+    def compare_score_distribution(self, df: pd.DataFrame):
+        plt.figure(figsize=(10, 6))
+        sns.kdeplot(data=df, x='user_score', label='User Score', fill=True)
+        sns.kdeplot(data=df, x='public_score', label='Public Score', fill=True)
+        
+        plt.title('Distribution of User Score vs. Public Score')
+        plt.xlabel('Score')
+        plt.ylabel('Density')
+        plt.legend()
+        plt.show()
 
     def watching_frequency_by_day(self, df: pd.DataFrame):
         df['day_of_week'] = df['user_created_at'].dt.day_name()
         days_frequency = df['day_of_week'].value_counts()
-        days_frequency.plot(kind='bar')
 
-        plt.title('Anime watching frequency by day of week')
-        plt.xlabel('Day of week')
-        plt.ylabel('Number of animes watched')
+        plt.figure(figsize=(10, 6))
+        sns.countplot(x='day_of_week', data=df, order=days_frequency.index, palette='viridis')
+        plt.title('Anime Watching Frequency by Day of Week')
+        plt.xlabel('Day of Week')
+        plt.ylabel('Number of Animes Watched')
         plt.show()
+
 
 def load_data(user_id: str, disable_proxy: bool) -> pd.DataFrame:
     try:
@@ -212,8 +301,10 @@ def main(user_id: str, disable_proxy: bool):
     analyzer = AnimeDataAnalyzer()
 
     analyzer.genre_preferences_over_time(df)
+    analyzer.genre_preferences_over_time_dt(df)
     analyzer.favorite_studio(df)
     analyzer.compare_scores(df)
+    analyzer.compare_score_distribution(df)
     analyzer.watching_frequency_by_day(df)
 
 if __name__ == "__main__":
